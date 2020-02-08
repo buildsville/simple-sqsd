@@ -1,5 +1,3 @@
-[![Build Status](https://travis-ci.org/fterrag/simple-sqsd.svg?branch=master)](https://travis-ci.org/fterrag/simple-sqsd) [![Go Report Card](https://goreportcard.com/badge/github.com/fterrag/simple-sqsd)](https://goreportcard.com/report/github.com/fterrag/simple-sqsd)
-
 # simple-sqsd
 
 A simple version of the AWS Elastic Beanstalk Worker Environment SQS daemon ([sqsd](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features-managing-env-tiers.html#worker-daemon)).
@@ -12,7 +10,7 @@ $ SQSD_QUEUE_REGION=us-east-1 SQSD_QUEUE_URL=http://queue.url SQSD_HTTP_URL=http
 
 Docker (uses a Docker Hub repository):
 ```bash
-$ docker run -e AWS_ACCESS_KEY_ID=your-access-id AWS_SECRET_ACCESS_KEY=your-secret-key SQSD_QUEUE_REGION=us-east-1 -e SQSD_QUEUE_URL=http://queue.url -e SQSD_HTTP_URL=http://service.url/endpoint fterrag/simple-sqsd:latest
+$ docker run -e AWS_ACCESS_KEY_ID=your-access-id AWS_SECRET_ACCESS_KEY=your-secret-key SQSD_QUEUE_REGION=us-east-1 -e SQSD_QUEUE_URL=http://queue.url -e SQSD_HTTP_URL=http://service.url/endpoint masahata/simple-sqsd:latest
 ```
 
 ## Configuration
