@@ -17,10 +17,11 @@ import (
 )
 
 type config struct {
-	QueueRegion      string
-	QueueURL         string
-	QueueMaxMessages int
-	QueueWaitTime    int
+	QueueRegion                 string
+	QueueURL                    string
+	QueueMaxMessages            int
+	QueueWaitTime               int
+	QueueErrorVisibilityTimeout int
 
 	HTTPMaxConns    int
 	HTTPURL         string
@@ -48,6 +49,7 @@ func main() {
 	c.QueueURL = os.Getenv("SQSD_QUEUE_URL")
 	c.QueueMaxMessages = getEnvInt("SQSD_QUEUE_MAX_MSGS", 10)
 	c.QueueWaitTime = getEnvInt("SQSD_QUEUE_WAIT_TIME", 10)
+	c.QueueErrorVisibilityTimeout = getEnvInt("SQSD_ERROR_VISIBILITY_TIMEOUT", -1)
 
 	c.HTTPMaxConns = getEnvInt("SQSD_HTTP_MAX_CONNS", 25)
 	c.HTTPURL = os.Getenv("SQSD_HTTP_URL")
@@ -140,9 +142,10 @@ func main() {
 	sqsSvc := sqs.New(awsSess, sqsConfig)
 
 	wConf := supervisor.WorkerConfig{
-		QueueURL:         c.QueueURL,
-		QueueMaxMessages: c.QueueMaxMessages,
-		QueueWaitTime:    c.QueueWaitTime,
+		QueueURL:                    c.QueueURL,
+		QueueMaxMessages:            c.QueueMaxMessages,
+		QueueWaitTime:               c.QueueWaitTime,
+		QueueErrorVisibilityTimeout: c.QueueErrorVisibilityTimeout,
 
 		HTTPURL:         c.HTTPURL,
 		HTTPContentType: c.HTTPContentType,

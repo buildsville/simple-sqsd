@@ -34,9 +34,10 @@ type Supervisor struct {
 }
 
 type WorkerConfig struct {
-	QueueURL         string
-	QueueMaxMessages int
-	QueueWaitTime    int
+	QueueURL                    string
+	QueueMaxMessages            int
+	QueueWaitTime               int
+	QueueErrorVisibilityTimeout int
 
 	HTTPURL         string
 	HTTPContentType string
@@ -133,6 +134,15 @@ func (s *Supervisor) worker() {
 					})
 				}
 
+				if s.workerConfig.QueueErrorVisibilityTimeout >= 0 {
+					sec := int64(s.workerConfig.QueueErrorVisibilityTimeout)
+					changeVisibilityEntries = append(changeVisibilityEntries, &sqs.ChangeMessageVisibilityBatchRequestEntry{
+						Id:                msg.MessageId,
+						ReceiptHandle:     msg.ReceiptHandle,
+						VisibilityTimeout: aws.Int64(sec),
+					})
+				}
+
 				s.logger.Errorf("Non-successful status code: %d", res.StatusCode)
 
 				continue
@@ -207,7 +217,7 @@ func (s *Supervisor) httpRequest(msg *sqs.Message) (*http.Response, error) {
 
 func (s *Supervisor) addMessageAttributesToHeader(attrs map[string]*sqs.MessageAttributeValue, header http.Header) {
 	for k, v := range attrs {
-		header.Add("X-Aws-Sqsd-Attr-" + k, *v.StringValue)
+		header.Add("X-Aws-Sqsd-Attr-"+k, *v.StringValue)
 	}
 }
 
