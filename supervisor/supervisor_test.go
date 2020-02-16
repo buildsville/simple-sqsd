@@ -218,10 +218,7 @@ func TestSupervisorHMAC(t *testing.T) {
 
 func TestSupervisorTooManyRequests(t *testing.T) {
 	delayTime := time.Duration(1 * time.Hour)
-	requestCount := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		w.Header().Set("Retry-After", fmt.Sprintf("%v", delayTime.Seconds()))
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -389,6 +386,296 @@ func TestSupervisorChangeVisibilityTimeoutByError(t *testing.T) {
 			assert.True(t, *entry.VisibilityTimeout == int64(config.QueueErrorVisibilityTimeout))
 		}
 
+		return nil, nil
+	}
+
+	supervisor.Start(1)
+	supervisor.Wait()
+}
+
+func TestPrimaryQueue(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	log.SetOutput(ioutil.Discard)
+	logger := log.WithFields(log.Fields{})
+	mockSQS := &mockSQS{}
+	config := WorkerConfig{
+		QueueURL:          "primaryQueueURL",
+		QueueSecondaryURL: "secondaryQueueURL",
+		HTTPURL:           ts.URL,
+		HTTPContentType:   "application/json",
+	}
+
+	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		if *input.QueueUrl == config.QueueURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("primaryMessage"),
+					MessageId:     aws.String("pm1"),
+					ReceiptHandle: aws.String("pr1"),
+				}},
+			}, nil
+		} else if *input.QueueUrl == config.QueueSecondaryURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("secondaryMessage"),
+					MessageId:     aws.String("sm1"),
+					ReceiptHandle: aws.String("sr1"),
+				}},
+			}, nil
+		} else {
+			return nil, nil
+		}
+	}
+
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
+	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
+		defer supervisor.Shutdown()
+		assert.True(t, *input.Entries[0].Id == "pm1")
+		assert.True(t, *input.QueueUrl == config.QueueURL)
+		return nil, nil
+	}
+
+	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
+		assert.Fail(t, "ChangeMessageVisibilityBatchFunc was called")
+		return nil, nil
+	}
+
+	supervisor.Start(1)
+	supervisor.Wait()
+}
+
+func TestSecondaryQueue(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	log.SetOutput(ioutil.Discard)
+	logger := log.WithFields(log.Fields{})
+	mockSQS := &mockSQS{}
+	config := WorkerConfig{
+		QueueURL:          "primaryQueueURL",
+		QueueSecondaryURL: "secondaryQueueURL",
+		HTTPURL:           ts.URL,
+		HTTPContentType:   "application/json",
+	}
+
+	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		if *input.QueueUrl == config.QueueURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: make([]*sqs.Message, 0),
+			}, nil
+		} else if *input.QueueUrl == config.QueueSecondaryURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("secondaryMessage"),
+					MessageId:     aws.String("sm1"),
+					ReceiptHandle: aws.String("sr1"),
+				}},
+			}, nil
+		} else {
+			return nil, nil
+		}
+	}
+
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
+	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
+		defer supervisor.Shutdown()
+		assert.True(t, *input.Entries[0].Id == "sm1")
+		assert.True(t, *input.QueueUrl == config.QueueSecondaryURL)
+		return nil, nil
+	}
+
+	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
+		assert.Fail(t, "ChangeMessageVisibilityBatchFunc was called")
+		return nil, nil
+	}
+
+	supervisor.Start(1)
+	supervisor.Wait()
+}
+
+func TestPrimaryQueueFail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	log.SetOutput(ioutil.Discard)
+	logger := log.WithFields(log.Fields{})
+	mockSQS := &mockSQS{}
+	config := WorkerConfig{
+		QueueURL:                    "primaryQueueURL",
+		QueueSecondaryURL:           "secondaryQueueURL",
+		HTTPURL:                     ts.URL,
+		HTTPContentType:             "application/json",
+		QueueErrorVisibilityTimeout: 5,
+	}
+
+	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		if *input.QueueUrl == config.QueueURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("primaryMessage"),
+					MessageId:     aws.String("pm1"),
+					ReceiptHandle: aws.String("pr1"),
+				}},
+			}, nil
+		} else if *input.QueueUrl == config.QueueSecondaryURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("secondaryMessage"),
+					MessageId:     aws.String("sm1"),
+					ReceiptHandle: aws.String("sr1"),
+				}},
+			}, nil
+		} else {
+			return nil, nil
+		}
+	}
+
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
+	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
+		assert.Fail(t, "DeleteMessageBatchInput was called")
+		return nil, nil
+	}
+
+	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
+		defer supervisor.Shutdown()
+		for _, entry := range input.Entries {
+			assert.True(t, *entry.VisibilityTimeout == int64(config.QueueErrorVisibilityTimeout))
+		}
+		assert.True(t, *input.Entries[0].Id == "pm1")
+		assert.True(t, *input.QueueUrl == config.QueueURL)
+		return nil, nil
+	}
+
+	supervisor.Start(1)
+	supervisor.Wait()
+}
+
+func TestSecondaryQueueFail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	log.SetOutput(ioutil.Discard)
+	logger := log.WithFields(log.Fields{})
+	mockSQS := &mockSQS{}
+	config := WorkerConfig{
+		QueueURL:                    "primaryQueueURL",
+		QueueSecondaryURL:           "secondaryQueueURL",
+		HTTPURL:                     ts.URL,
+		HTTPContentType:             "application/json",
+		QueueErrorVisibilityTimeout: 5,
+	}
+
+	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		if *input.QueueUrl == config.QueueURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: make([]*sqs.Message, 0),
+			}, nil
+		} else if *input.QueueUrl == config.QueueSecondaryURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("secondaryMessage"),
+					MessageId:     aws.String("sm1"),
+					ReceiptHandle: aws.String("sr1"),
+				}},
+			}, nil
+		} else {
+			return nil, nil
+		}
+	}
+
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
+	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
+		assert.Fail(t, "DeleteMessageBatchInput was called")
+		return nil, nil
+	}
+
+	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
+		defer supervisor.Shutdown()
+		for _, entry := range input.Entries {
+			assert.True(t, *entry.VisibilityTimeout == int64(config.QueueErrorVisibilityTimeout))
+		}
+		assert.True(t, *input.Entries[0].Id == "sm1")
+		assert.True(t, *input.QueueUrl == config.QueueSecondaryURL)
+		return nil, nil
+	}
+
+	supervisor.Start(1)
+	supervisor.Wait()
+}
+
+func TestNoSecondaryQueueURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	log.SetOutput(ioutil.Discard)
+	logger := log.WithFields(log.Fields{})
+	mockSQS := &mockSQS{}
+	config := WorkerConfig{
+		QueueURL:          "primaryQueueURL",
+		QueueSecondaryURL: "",
+		HTTPURL:           ts.URL,
+		HTTPContentType:   "application/json",
+	}
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
+	receiveCount := 0
+	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		receiveCount++
+
+		if receiveCount == 5 {
+			supervisor.Shutdown()
+
+			return &sqs.ReceiveMessageOutput{
+				Messages: make([]*sqs.Message, 0),
+			}, nil
+		}
+
+		if *input.QueueUrl == config.QueueURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: make([]*sqs.Message, 0),
+			}, nil
+		} else if *input.QueueUrl == config.QueueSecondaryURL {
+			return &sqs.ReceiveMessageOutput{
+				Messages: []*sqs.Message{{
+					Body:          aws.String("secondaryMessage"),
+					MessageId:     aws.String("sm1"),
+					ReceiptHandle: aws.String("sr1"),
+				}},
+			}, nil
+		} else {
+			return nil, nil
+		}
+	}
+
+	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
+		assert.Fail(t, "DeleteMessageBatchInput was called")
+		return nil, nil
+	}
+
+	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
+		assert.Fail(t, "ChangeMessageVisibilityBatchFunc was called")
 		return nil, nil
 	}
 
