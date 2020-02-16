@@ -18,7 +18,8 @@ $ docker run -e AWS_ACCESS_KEY_ID=your-access-id AWS_SECRET_ACCESS_KEY=your-secr
 |**Environment Variable**|**Default Value**|**Required**|**Description**|
 |-|-|-|-|
 |`SQSD_QUEUE_REGION`||yes|The region of the SQS queue.|
-|`SQSD_QUEUE_URL`||yes|The URL of the SQS queue.|
+|`SQSD_QUEUE_URL`||yes|The URL of the SQS queue.(primary)|
+|`SQSD_SECONDARY_QUEUE_URL`||no|The URL of the secondary SQS queue.|
 |`SQSD_QUEUE_MAX_MSGS`|`10`|no|Max number of messages a worker should try to receive from the SQS queue.|
 |`SQSD_QUEUE_WAIT_TIME`|`10`|no|The duration (in seconds) for which the call waits for a message to arrive in the queue before returning. Setting this to `0` disables long polling. Maximum of `20` seconds.|
 |`SQSD_ERROR_VISIBILITY_TIMEOUT`|`none`|no|The duration seconds before message is visible again after an unsuccessful operation with an explicit error.|

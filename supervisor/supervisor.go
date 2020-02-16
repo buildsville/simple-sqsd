@@ -35,6 +35,7 @@ type Supervisor struct {
 
 type WorkerConfig struct {
 	QueueURL                    string
+	QueueSecondaryURL           string
 	QueueMaxMessages            int
 	QueueWaitTime               int
 	QueueErrorVisibilityTimeout int
@@ -91,96 +92,114 @@ func (s *Supervisor) worker() {
 			return
 		}
 
-		recInput := &sqs.ReceiveMessageInput{
-			MaxNumberOfMessages:   aws.Int64(int64(s.workerConfig.QueueMaxMessages)),
-			QueueUrl:              aws.String(s.workerConfig.QueueURL),
-			WaitTimeSeconds:       aws.Int64(int64(s.workerConfig.QueueWaitTime)),
-			MessageAttributeNames: aws.StringSlice([]string{"All"}),
-		}
-
-		output, err := s.sqs.ReceiveMessage(recInput)
+		output, err := s.getMessage(s.workerConfig.QueueURL)
 		if err != nil {
-			s.logger.Errorf("Error while receiving messages from the queue: %s", err)
+			s.logger.Errorf("Error while receiving messages from the queue (%s): %s", s.workerConfig.QueueURL, err)
 			continue
 		}
 
-		if len(output.Messages) == 0 {
-			continue
-		}
-
-		deleteEntries := make([]*sqs.DeleteMessageBatchRequestEntry, 0)
-		changeVisibilityEntries := make([]*sqs.ChangeMessageVisibilityBatchRequestEntry, 0)
-
-		for _, msg := range output.Messages {
-			res, err := s.httpRequest(msg)
+		if len(output.Messages) > 0 {
+			s.workerAction(s.workerConfig.QueueURL, output)
+		} else if s.workerConfig.QueueSecondaryURL != "" {
+			output, err := s.getMessage(s.workerConfig.QueueSecondaryURL)
 			if err != nil {
-				s.logger.Errorf("Error making HTTP request: %s", err)
+				s.logger.Errorf("Error while receiving messages from the queue (%s): %s", s.workerConfig.QueueSecondaryURL, err)
 				continue
 			}
 
-			if res.StatusCode < http.StatusOK || res.StatusCode > http.StatusIMUsed {
-
-				if res.StatusCode == http.StatusTooManyRequests {
-					sec, err := getRetryAfterFromResponse(res)
-					if err != nil {
-						s.logger.Errorf("Error getting retry after value from HTTP response: %s", err)
-						continue
-					}
-
-					changeVisibilityEntries = append(changeVisibilityEntries, &sqs.ChangeMessageVisibilityBatchRequestEntry{
-						Id:                msg.MessageId,
-						ReceiptHandle:     msg.ReceiptHandle,
-						VisibilityTimeout: aws.Int64(sec),
-					})
-				}
-
-				if s.workerConfig.QueueErrorVisibilityTimeout >= 0 {
-					sec := int64(s.workerConfig.QueueErrorVisibilityTimeout)
-					changeVisibilityEntries = append(changeVisibilityEntries, &sqs.ChangeMessageVisibilityBatchRequestEntry{
-						Id:                msg.MessageId,
-						ReceiptHandle:     msg.ReceiptHandle,
-						VisibilityTimeout: aws.Int64(sec),
-					})
-				}
-
-				s.logger.Errorf("Non-successful status code: %d", res.StatusCode)
-
-				continue
-
-			}
-
-			deleteEntries = append(deleteEntries, &sqs.DeleteMessageBatchRequestEntry{
-				Id:            msg.MessageId,
-				ReceiptHandle: msg.ReceiptHandle,
-			})
-
-			s.logger.Debugf("Message %s successfully processed", *msg.MessageId)
-		}
-
-		if len(deleteEntries) > 0 {
-			delInput := &sqs.DeleteMessageBatchInput{
-				Entries:  deleteEntries,
-				QueueUrl: aws.String(s.workerConfig.QueueURL),
-			}
-
-			_, err = s.sqs.DeleteMessageBatch(delInput)
-			if err != nil {
-				s.logger.Errorf("Error while deleting messages from SQS: %s", err)
-			}
-		}
-
-		if len(changeVisibilityEntries) > 0 {
-			changeVisibilityInput := &sqs.ChangeMessageVisibilityBatchInput{
-				Entries:  changeVisibilityEntries,
-				QueueUrl: aws.String(s.workerConfig.QueueURL),
-			}
-
-			_, err = s.sqs.ChangeMessageVisibilityBatch(changeVisibilityInput)
-			if err != nil {
-				s.logger.Errorf("Error while changing visibility on messages from SQS: %s", err)
+			if len(output.Messages) > 0 {
+				s.workerAction(s.workerConfig.QueueSecondaryURL, output)
 			}
 		}
 	}
+}
+
+func (s *Supervisor) workerAction(queueUrl string, output *sqs.ReceiveMessageOutput) {
+	deleteEntries := make([]*sqs.DeleteMessageBatchRequestEntry, 0)
+	changeVisibilityEntries := make([]*sqs.ChangeMessageVisibilityBatchRequestEntry, 0)
+
+	for _, msg := range output.Messages {
+		res, err := s.httpRequest(msg)
+		if err != nil {
+			s.logger.Errorf("Error making HTTP request: %s", err)
+			continue
+		}
+
+		if res.StatusCode < http.StatusOK || res.StatusCode > http.StatusIMUsed {
+
+			if res.StatusCode == http.StatusTooManyRequests {
+				sec, err := getRetryAfterFromResponse(res)
+				if err != nil {
+					s.logger.Errorf("Error getting retry after value from HTTP response: %s", err)
+					continue
+				}
+
+				changeVisibilityEntries = append(changeVisibilityEntries, &sqs.ChangeMessageVisibilityBatchRequestEntry{
+					Id:                msg.MessageId,
+					ReceiptHandle:     msg.ReceiptHandle,
+					VisibilityTimeout: aws.Int64(sec),
+				})
+			}
+
+			if res.StatusCode != http.StatusTooManyRequests && s.workerConfig.QueueErrorVisibilityTimeout >= 0 {
+				sec := int64(s.workerConfig.QueueErrorVisibilityTimeout)
+				changeVisibilityEntries = append(changeVisibilityEntries, &sqs.ChangeMessageVisibilityBatchRequestEntry{
+					Id:                msg.MessageId,
+					ReceiptHandle:     msg.ReceiptHandle,
+					VisibilityTimeout: aws.Int64(sec),
+				})
+			}
+
+			s.logger.Errorf("Non-successful status code: %d", res.StatusCode)
+			continue
+		}
+
+		deleteEntries = append(deleteEntries, &sqs.DeleteMessageBatchRequestEntry{
+			Id:            msg.MessageId,
+			ReceiptHandle: msg.ReceiptHandle,
+		})
+
+		s.logger.Debugf("Message %s successfully processed", *msg.MessageId)
+	}
+
+	if len(deleteEntries) > 0 {
+		delInput := &sqs.DeleteMessageBatchInput{
+			Entries:  deleteEntries,
+			QueueUrl: aws.String(queueUrl),
+		}
+
+		_, err := s.sqs.DeleteMessageBatch(delInput)
+		if err != nil {
+			s.logger.Errorf("Error while deleting messages from SQS: %s", err)
+		}
+	}
+
+	if len(changeVisibilityEntries) > 0 {
+		changeVisibilityInput := &sqs.ChangeMessageVisibilityBatchInput{
+			Entries:  changeVisibilityEntries,
+			QueueUrl: aws.String(queueUrl),
+		}
+
+		_, err := s.sqs.ChangeMessageVisibilityBatch(changeVisibilityInput)
+		if err != nil {
+			s.logger.Errorf("Error while changing visibility on messages from SQS: %s", err)
+		}
+	}
+}
+
+func (s *Supervisor) getMessage(queueUrl string) (*sqs.ReceiveMessageOutput, error) {
+	recInput := &sqs.ReceiveMessageInput{
+		MaxNumberOfMessages:   aws.Int64(int64(s.workerConfig.QueueMaxMessages)),
+		QueueUrl:              aws.String(queueUrl),
+		WaitTimeSeconds:       aws.Int64(int64(s.workerConfig.QueueWaitTime)),
+		MessageAttributeNames: aws.StringSlice([]string{"All"}),
+	}
+
+	output, err := s.sqs.ReceiveMessage(recInput)
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 func (s *Supervisor) httpRequest(msg *sqs.Message) (*http.Response, error) {

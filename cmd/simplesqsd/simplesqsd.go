@@ -19,6 +19,7 @@ import (
 type config struct {
 	QueueRegion                 string
 	QueueURL                    string
+	QueueSecondaryURL           string
 	QueueMaxMessages            int
 	QueueWaitTime               int
 	QueueErrorVisibilityTimeout int
@@ -47,6 +48,7 @@ func main() {
 
 	c.QueueRegion = os.Getenv("SQSD_QUEUE_REGION")
 	c.QueueURL = os.Getenv("SQSD_QUEUE_URL")
+	c.QueueSecondaryURL = os.Getenv("SQSD_SECONDARY_QUEUE_URL")
 	c.QueueMaxMessages = getEnvInt("SQSD_QUEUE_MAX_MSGS", 10)
 	c.QueueWaitTime = getEnvInt("SQSD_QUEUE_WAIT_TIME", 10)
 	c.QueueErrorVisibilityTimeout = getEnvInt("SQSD_ERROR_VISIBILITY_TIMEOUT", -1)
@@ -93,10 +95,11 @@ func main() {
 	}
 
 	logger := log.WithFields(log.Fields{
-		"queueRegion":  c.QueueRegion,
-		"queueUrl":     c.QueueURL,
-		"httpMaxConns": c.HTTPMaxConns,
-		"httpPath":     c.HTTPURL,
+		"queueRegion":       c.QueueRegion,
+		"queueUrl":          c.QueueURL,
+		"secondaryQueueUrl": c.QueueSecondaryURL,
+		"httpMaxConns":      c.HTTPMaxConns,
+		"httpPath":          c.HTTPURL,
 	})
 
 	if len(c.HTTPHealthPath) != 0 {
@@ -143,6 +146,7 @@ func main() {
 
 	wConf := supervisor.WorkerConfig{
 		QueueURL:                    c.QueueURL,
+		QueueSecondaryURL:           c.QueueSecondaryURL,
 		QueueMaxMessages:            c.QueueMaxMessages,
 		QueueWaitTime:               c.QueueWaitTime,
 		QueueErrorVisibilityTimeout: c.QueueErrorVisibilityTimeout,
