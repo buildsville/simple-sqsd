@@ -71,6 +71,7 @@ func (s *Supervisor) Start(numWorkers int) {
 }
 
 func (s *Supervisor) Wait() {
+	s.logger.Debug("Waiting for worker finish...")
 	s.wg.Wait()
 }
 
@@ -82,6 +83,7 @@ func (s *Supervisor) Shutdown() {
 }
 
 func (s *Supervisor) worker() {
+	defer s.logger.Debug("Finished worker.")
 	defer s.wg.Done()
 
 	s.logger.Info("Starting worker")
