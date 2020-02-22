@@ -66,7 +66,11 @@ func TestSupervisorSuccess(t *testing.T) {
 		HTTPContentType: "application/json",
 	}
 
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
 	mockSQS.receiveMessageFunc = func(*sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		return &sqs.ReceiveMessageOutput{
 			Messages: []*sqs.Message{{
 				Body:          aws.String("message 1"),
@@ -84,11 +88,7 @@ func TestSupervisorSuccess(t *testing.T) {
 		}, nil
 	}
 
-	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
-
 	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
-		defer supervisor.Shutdown()
-
 		assert.Len(t, input.Entries, 3)
 
 		return nil, nil
@@ -100,7 +100,7 @@ func TestSupervisorSuccess(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestSupervisorHTTPError(t *testing.T) {
@@ -160,7 +160,7 @@ func TestSupervisorHTTPError(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestSupervisorHMAC(t *testing.T) {
@@ -211,7 +211,7 @@ func TestSupervisorHMAC(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 
 	assert.True(t, hmacSuccess)
 }
@@ -234,7 +234,11 @@ func TestSupervisorTooManyRequests(t *testing.T) {
 		QueueErrorVisibilityTimeout: -1,
 	}
 
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
 	mockSQS.receiveMessageFunc = func(*sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		return &sqs.ReceiveMessageOutput{Messages: []*sqs.Message{{
 			Body:          aws.String("message 1"),
 			MessageId:     aws.String("m1"),
@@ -256,11 +260,7 @@ func TestSupervisorTooManyRequests(t *testing.T) {
 		return nil, nil
 	}
 
-	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
-
 	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
-		defer supervisor.Shutdown()
-
 		assert.Len(t, input.Entries, 3)
 		for _, entry := range input.Entries {
 			VisibilityTimeout := *entry.VisibilityTimeout
@@ -273,7 +273,7 @@ func TestSupervisorTooManyRequests(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestSupervisorTooManyRequestsBadRetryAfter(t *testing.T) {
@@ -336,7 +336,7 @@ func TestSupervisorTooManyRequestsBadRetryAfter(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestSupervisorChangeVisibilityTimeoutByError(t *testing.T) {
@@ -356,6 +356,8 @@ func TestSupervisorChangeVisibilityTimeoutByError(t *testing.T) {
 	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
 
 	mockSQS.receiveMessageFunc = func(*sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		return &sqs.ReceiveMessageOutput{Messages: []*sqs.Message{{
 			Body:          aws.String("message 1"),
 			MessageId:     aws.String("m1"),
@@ -379,8 +381,6 @@ func TestSupervisorChangeVisibilityTimeoutByError(t *testing.T) {
 	}
 
 	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
-		defer supervisor.Shutdown()
-
 		assert.Len(t, input.Entries, 3)
 		for _, entry := range input.Entries {
 			assert.True(t, *entry.VisibilityTimeout == int64(config.QueueErrorVisibilityTimeout))
@@ -390,7 +390,7 @@ func TestSupervisorChangeVisibilityTimeoutByError(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestPrimaryQueue(t *testing.T) {
@@ -411,7 +411,11 @@ func TestPrimaryQueue(t *testing.T) {
 		HTTPContentType:   "application/json",
 	}
 
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
 	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		if *input.QueueUrl == config.QueueURL {
 			return &sqs.ReceiveMessageOutput{
 				Messages: []*sqs.Message{{
@@ -433,10 +437,7 @@ func TestPrimaryQueue(t *testing.T) {
 		}
 	}
 
-	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
-
 	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
-		defer supervisor.Shutdown()
 		assert.True(t, *input.Entries[0].Id == "pm1")
 		assert.True(t, *input.QueueUrl == config.QueueURL)
 		return nil, nil
@@ -448,7 +449,7 @@ func TestPrimaryQueue(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestSecondaryQueue(t *testing.T) {
@@ -469,7 +470,11 @@ func TestSecondaryQueue(t *testing.T) {
 		HTTPContentType:   "application/json",
 	}
 
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
 	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		if *input.QueueUrl == config.QueueURL {
 			return &sqs.ReceiveMessageOutput{
 				Messages: make([]*sqs.Message, 0),
@@ -487,10 +492,7 @@ func TestSecondaryQueue(t *testing.T) {
 		}
 	}
 
-	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
-
 	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
-		defer supervisor.Shutdown()
 		assert.True(t, *input.Entries[0].Id == "sm1")
 		assert.True(t, *input.QueueUrl == config.QueueSecondaryURL)
 		return nil, nil
@@ -502,7 +504,7 @@ func TestSecondaryQueue(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestPrimaryQueueFail(t *testing.T) {
@@ -522,7 +524,11 @@ func TestPrimaryQueueFail(t *testing.T) {
 		QueueErrorVisibilityTimeout: 5,
 	}
 
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
 	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		if *input.QueueUrl == config.QueueURL {
 			return &sqs.ReceiveMessageOutput{
 				Messages: []*sqs.Message{{
@@ -544,8 +550,6 @@ func TestPrimaryQueueFail(t *testing.T) {
 		}
 	}
 
-	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
-
 	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
 		assert.Fail(t, "DeleteMessageBatchInput was called")
 		return nil, nil
@@ -562,7 +566,7 @@ func TestPrimaryQueueFail(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestSecondaryQueueFail(t *testing.T) {
@@ -582,7 +586,11 @@ func TestSecondaryQueueFail(t *testing.T) {
 		QueueErrorVisibilityTimeout: 5,
 	}
 
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
 	mockSQS.receiveMessageFunc = func(input *sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
 		if *input.QueueUrl == config.QueueURL {
 			return &sqs.ReceiveMessageOutput{
 				Messages: make([]*sqs.Message, 0),
@@ -600,15 +608,12 @@ func TestSecondaryQueueFail(t *testing.T) {
 		}
 	}
 
-	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
-
 	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
 		assert.Fail(t, "DeleteMessageBatchInput was called")
 		return nil, nil
 	}
 
 	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
-		defer supervisor.Shutdown()
 		for _, entry := range input.Entries {
 			assert.True(t, *entry.VisibilityTimeout == int64(config.QueueErrorVisibilityTimeout))
 		}
@@ -618,7 +623,7 @@ func TestSecondaryQueueFail(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }
 
 func TestNoSecondaryQueueURL(t *testing.T) {
@@ -680,5 +685,5 @@ func TestNoSecondaryQueueURL(t *testing.T) {
 	}
 
 	supervisor.Start(1)
-	supervisor.Wait()
+	supervisor.WaitWorker()
 }

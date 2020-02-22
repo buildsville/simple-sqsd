@@ -1,4 +1,4 @@
-module github.com/buildsville/simple-sqsd
+module github.com/showcase-gig-platform/simple-sqsd
 
 go 1.12
 

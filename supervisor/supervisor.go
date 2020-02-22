@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/sqs"
@@ -71,8 +74,17 @@ func (s *Supervisor) Start(numWorkers int) {
 	})
 }
 
-func (s *Supervisor) Wait() {
+func (s *Supervisor) WaitWorker() {
+	s.logger.Debug("Waiting for finish worker...")
 	s.wg.Wait()
+}
+
+func (s *Supervisor) WaitSignal() {
+	quit := make(chan os.Signal)
+	defer close(quit)
+	signal.Notify(quit, syscall.SIGTERM) //only SIGTERM
+	<-quit
+	s.logger.Debug("Catch signal.")
 }
 
 func (s *Supervisor) Shutdown() {
@@ -83,6 +95,7 @@ func (s *Supervisor) Shutdown() {
 }
 
 func (s *Supervisor) worker() {
+	defer s.logger.Debug("Finished worker.")
 	defer s.wg.Done()
 
 	s.logger.Info("Starting worker")

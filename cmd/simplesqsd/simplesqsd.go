@@ -12,7 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/buildsville/simple-sqsd/supervisor"
+	"github.com/showcase-gig-platform/simple-sqsd/supervisor"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -172,7 +172,10 @@ func main() {
 
 	s := supervisor.NewSupervisor(logger, sqsSvc, httpClient, wConf)
 	s.Start(c.HTTPMaxConns)
-	s.Wait()
+
+	s.WaitSignal()
+	s.Shutdown()
+	s.WaitWorker()
 }
 
 func getEnvInt(key string, def int) int {
