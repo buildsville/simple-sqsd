@@ -168,7 +168,10 @@ func main() {
 
 	s := supervisor.NewSupervisor(logger, sqsSvc, httpClient, wConf)
 	s.Start(c.HTTPMaxConns)
-	s.Wait()
+
+	s.WaitSignal()
+	s.Shutdown()
+	s.WaitWorker()
 }
 
 func getEnvInt(key string, def int) int {
