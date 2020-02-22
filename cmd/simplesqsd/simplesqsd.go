@@ -8,8 +8,6 @@ import (
 	"os"
 	"strconv"
 	"time"
-	"syscall"
-	"os/signal"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -171,12 +169,9 @@ func main() {
 	s := supervisor.NewSupervisor(logger, sqsSvc, httpClient, wConf)
 	s.Start(c.HTTPMaxConns)
 
-    quit := make(chan os.Signal)
-    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-	<-quit
-
+	s.WaitSignal()
 	s.Shutdown()
-	s.Wait()
+	s.WaitWorker()
 }
 
 func getEnvInt(key string, def int) int {
