@@ -127,7 +127,18 @@ func (s *Supervisor) worker() {
 		for _, msg := range output.Messages {
 			res, err := s.httpRequest(msg)
 			if err != nil {
+
+				if s.workerConfig.QueueErrorVisibilityTimeout >= 0 {
+					sec := int64(s.workerConfig.QueueErrorVisibilityTimeout)
+					changeVisibilityEntries = append(changeVisibilityEntries, &sqs.ChangeMessageVisibilityBatchRequestEntry{
+						Id:                msg.MessageId,
+						ReceiptHandle:     msg.ReceiptHandle,
+						VisibilityTimeout: aws.Int64(sec),
+					})
+				}
+
 				s.logger.Errorf("Error making HTTP request: %s", err)
+
 				continue
 			}
 

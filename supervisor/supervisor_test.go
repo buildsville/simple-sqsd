@@ -395,3 +395,61 @@ func TestSupervisorChangeVisibilityTimeoutByError(t *testing.T) {
 	supervisor.Start(1)
 	supervisor.WaitWorker()
 }
+
+func TestSupervisorChangeVisibilityTimeoutByWorkerError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	log.SetOutput(ioutil.Discard)
+	logger := log.WithFields(log.Fields{})
+	mockSQS := &mockSQS{}
+	config := WorkerConfig{
+		HTTPURL:                     ts.URL,
+		QueueErrorVisibilityTimeout: 5,
+	}
+
+	supervisor := NewSupervisor(logger, mockSQS, &http.Client{}, config)
+
+	calledChangeMessageVisibilityBatchFunc := false
+
+	mockSQS.receiveMessageFunc = func(*sqs.ReceiveMessageInput) (*sqs.ReceiveMessageOutput, error) {
+		defer supervisor.Shutdown()
+
+		return &sqs.ReceiveMessageOutput{Messages: []*sqs.Message{{
+			Body:          aws.String("message 1"),
+			MessageId:     aws.String("m1"),
+			ReceiptHandle: aws.String("r1"),
+		}, {
+			Body:          aws.String("message 2"),
+			MessageId:     aws.String("m2"),
+			ReceiptHandle: aws.String("r2"),
+		}, {
+			Body:          aws.String("message 3"),
+			MessageId:     aws.String("m3"),
+			ReceiptHandle: aws.String("r3"),
+		}},
+		}, nil
+	}
+
+	mockSQS.deleteMessageBatchFunc = func(input *sqs.DeleteMessageBatchInput) (*sqs.DeleteMessageBatchOutput, error) {
+		assert.Fail(t, "DeleteMessageBatchInput was called")
+
+		return nil, nil
+	}
+
+	mockSQS.changeMessageVisibilityBatchFunc = func(input *sqs.ChangeMessageVisibilityBatchInput) (*sqs.ChangeMessageVisibilityBatchOutput, error) {
+		assert.Len(t, input.Entries, 3)
+		for _, entry := range input.Entries {
+			assert.True(t, *entry.VisibilityTimeout == int64(config.QueueErrorVisibilityTimeout))
+		}
+		calledChangeMessageVisibilityBatchFunc = true
+
+		return nil, nil
+	}
+
+	ts.Close()
+	supervisor.Start(1)
+	supervisor.WaitWorker()
+	assert.True(t, calledChangeMessageVisibilityBatchFunc)
+}
