@@ -109,6 +109,7 @@ func (s *Supervisor) worker() {
 			QueueUrl:              aws.String(s.workerConfig.QueueURL),
 			WaitTimeSeconds:       aws.Int64(int64(s.workerConfig.QueueWaitTime)),
 			MessageAttributeNames: aws.StringSlice([]string{"All"}),
+			AttributeNames:        aws.StringSlice([]string{"ApproximateReceiveCount"}),
 		}
 
 		output, err := s.sqs.ReceiveMessage(recInput)
@@ -167,7 +168,7 @@ func (s *Supervisor) worker() {
 					})
 				}
 
-				s.logger.Errorf("Non-successful status code: %d", res.StatusCode)
+				s.logger.Errorf("Non-successful status code: %d, receive count: %s", res.StatusCode, *msg.Attributes["ApproximateReceiveCount"])
 
 				continue
 
@@ -211,6 +212,7 @@ func (s *Supervisor) httpRequest(msg *sqs.Message) (*http.Response, error) {
 	body := *msg.Body
 	req, err := http.NewRequest("POST", s.workerConfig.HTTPURL, bytes.NewBufferString(body))
 	req.Header.Add("X-Aws-Sqsd-Msgid", *msg.MessageId)
+	req.Header.Add("X-Aws-Sqsd-Receive-Count", *msg.Attributes["ApproximateReceiveCount"])
 	s.addMessageAttributesToHeader(msg.MessageAttributes, req.Header)
 	if err != nil {
 		return nil, fmt.Errorf("Error while creating HTTP request: %s", err)
